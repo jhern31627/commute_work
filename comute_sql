@@ -1,0 +1,299 @@
+use comute_test
+select * from comute
+
+
+
+-- dataset combined
+select
+	DENSE_RANK() OVER (order by c.state),
+	c.GEOID,
+	c.GEOID_SPLIT,
+	c.state,
+	c.county,
+	c.mmhi,
+	c.vehicle_travel_total,
+	c.vehicle_alone,
+	c.vehicle_carpool,
+	c.vehicle_public,
+	c.bike,
+	c.walk,
+	c.wfh,
+	c.total_workers,
+	isnull (p.pop_density,0) pop_density,
+	CASE 
+	  WHEN mmhi BETWEEN 2500 AND 39166 THEN 0
+	  WHEN mmhi BETWEEN 39167 AND 75833 THEN 1
+	  WHEN mmhi BETWEEN 75834 AND 112500 THEN 2
+	  WHEN mmhi BETWEEN 112501 AND 149167 THEN 3
+	  WHEN mmhi BETWEEN 149168 AND 185833 THEN 4
+	  WHEN mmhi >= 185834 THEN 5
+	  ELSE 6
+	END AS income_group
+from comute c
+left join Population p
+	ON c.GEOID_SPLIT = p.ID
+	AND c.State = p.State
+	AND c.County = p.County
+and mmhi <> -666666666
+
+
+
+
+--MEDIAN State Income 
+CREATE TABLE #median_state (
+	state nvarchar(100),
+	median_stateIncome int
+	)
+
+INSERT INTO #median_state (state, median_stateIncome)
+SELECT DISTINCT
+	state,
+	PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY mmhi) 
+	OVER(PARTITION BY state) as median_state
+FROM comute
+WHERE mmhi <> -666666666
+
+
+
+
+
+-- geoid split county
+ALTER TABLE comute
+ADD GEOID_SPLIT NVARCHAR (50)
+
+UPDATE comute 
+SET GEOID_SPLIT  = 
+    LEFT(CAST(CAST(GEOID AS BIGINT) AS NVARCHAR(50)), 4) 
+
+
+
+
+
+
+
+--1. Breakdown of Income Status comute to work other than by vehicle
+
+SELECT 
+	income_group,
+	CASE 
+		WHEN income_group = 0 THEN 'Very Low Income'
+		WHEN income_group = 1 THEN 'Low Income'
+		WHEN income_group = 2 THEN 'Lower-Middle Income'
+		WHEN income_group = 3  THEN 'Upper-Middle Income'
+		WHEN income_group = 4 THEN 'High Income'
+		WHEN income_group = 5 THEN 'Very High Income'
+	ELSE 'Out of Range'
+	END AS incomeStatus,
+	SUM(bike) bike, 
+	SUM(walk) walk,
+	SUM(wfh) wfh,
+	SUM(vehicle_public) as _public,
+	SUM(other) other
+FROM (
+
+	SELECT 
+		CASE 
+		  WHEN mmhi BETWEEN 2500 AND 39166 THEN 0
+		  WHEN mmhi BETWEEN 39167 AND 75833 THEN 1
+		  WHEN mmhi BETWEEN 75834 AND 112500 THEN 2
+		  WHEN mmhi BETWEEN 112501 AND 149167 THEN 3
+		  WHEN mmhi BETWEEN 149168 AND 185833 THEN 4
+		  WHEN mmhi >= 185834 THEN 5
+		  ELSE 6
+		END AS income_group,
+		bike,
+		walk,
+		wfh,
+		vehicle_public,
+		other
+	FROM comute
+	WHERE mmhi <> -666666666
+) as grouped
+GROUP BY income_group
+ORDER BY income_group
+
+
+
+
+
+
+
+--2. What county/ state most likely to adopt wfh (align with income) 
+
+WITH wfh_county AS (
+    SELECT 
+        c.GEOID,
+        c.State,
+        c.County, 
+        c.total_workers,
+        SUM(wfh) AS wfh_total,
+        mmhi,
+        ms.median_stateIncome, 
+        CASE 
+            WHEN mmhi BETWEEN 2500 AND 39166 THEN 0
+            WHEN mmhi BETWEEN 39167 AND 75833 THEN 1
+            WHEN mmhi BETWEEN 75834 AND 112500 THEN 2
+            WHEN mmhi BETWEEN 112501 AND 149167 THEN 3
+            WHEN mmhi BETWEEN 149168 AND 185833 THEN 4
+            WHEN mmhi >= 185834 THEN 5
+            ELSE 6
+        END AS income_group
+    FROM comute c
+    LEFT JOIN #median_state ms 
+		ON c.State = ms.state
+    WHERE mmhi NOT IN (-666666666, -333306386) 
+    GROUP BY c.State, c.County, c.total_workers, c.mmhi, ms.median_stateIncome, c.GEOID
+),
+
+state_median_wfh AS (
+    SELECT DISTINCT
+        state,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY wfh)
+        OVER (PARTITION BY state) AS median_wfh
+    FROM comute
+),
+
+wfh_final AS (
+    SELECT 
+        c.GEOID,
+        c.State,
+        c.County,
+        c.wfh_total,
+        s.median_wfh,
+        (c.wfh_total * 1.0 / NULLIF(s.median_wfh, 0)) AS gap_median,
+        c.mmhi,
+        c.median_stateIncome,
+        c.income_group,
+        CASE
+            WHEN c.income_group = 0 THEN 'Very Low Income'
+            WHEN c.income_group = 1 THEN 'Low-Middle Income'
+            WHEN c.income_group = 2 THEN 'Middle Income'
+            WHEN c.income_group = 3 THEN 'Upper-Middle Income'
+            WHEN c.income_group = 4 THEN 'High Income'
+            WHEN c.income_group = 5 THEN 'Very High Income'
+            ELSE 'Out of Range'
+        END AS income_status
+    FROM wfh_county c
+    LEFT JOIN state_median_wfh s 
+		ON c.State = s.State
+)
+
+SELECT top 20 *
+FROM wfh_final
+WHERE gap_median BETWEEN 0.30 AND 0.60
+  AND mmhi > median_stateIncome
+  AND income_group = 2
+ORDER BY gap_median DESC;
+
+
+-- 3. should focus on public comutes
+
+with state_public_count AS( 
+SELECT 
+	state, 
+	county, 
+	SUM(vehicle_public) _public,
+	SUM(walk) walk,
+	SUM(bike) bike
+FROM comute
+group by state, County
+),
+
+public_sum_total as (
+SELECT
+	State,
+	county,
+	(_public + walk + bike) as public_total
+FROM state_public_count
+),
+
+state_public_median as (
+SELECT distinct
+	state,
+	PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY public_total) 
+    OVER (PARTITION BY State) AS stateAvg_public
+FROM public_sum_total 
+),
+
+median_state_popDensity as (
+SELECT 
+	state,
+	(state_pop_total / state_area_total) as state_avg_pop_density
+FROM (
+	select 
+		state,
+		SUM([Population Total]) state_pop_total,
+		SUM([Area (Land, in square miles)]) state_area_total
+	from Population
+	GROUP by State
+	) AS state_info
+)
+
+select TOP 20
+	pt.County,
+	pt.State,
+	pt.public_total,
+	sm.stateAvg_public,
+	p.Pop_Density,
+	mp.state_avg_pop_density
+from Population p
+JOIN state_public_median sm
+	ON p.State = sm.State 
+JOIN median_state_popDensity mp
+	ON p.State = mp.State
+JOIN public_sum_total pt
+	ON pt.State = p.State
+	AND pt.County = p.County
+WHERE public_total < stateAvg_public
+ORDER BY public_total ASC
+
+
+
+
+
+-- 4. County Most likely to utilize carpool
+
+
+
+WITH carpool_count AS (
+    SELECT 
+		GEOID,
+        State,
+        County,
+        SUM(vehicle_carpool) AS carpool,
+        SUM(vehicle_travel_total) AS total
+    FROM comute
+    GROUP BY State, County, GEOID
+),
+county_perc AS (
+    SELECT 
+		GEOID,
+        State,
+        County,
+        carpool,
+        total,
+        (carpool * 1.0 / NULLIF(total, 0)) AS perc_carpool
+    FROM carpool_count
+),
+with_median AS (
+    SELECT *,
+		PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY carpool)
+        OVER () AS national_median_carpool,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY perc_carpool)
+        OVER () AS national_median_carpool_perc,
+		PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY carpool)
+		OVER (PARTITION BY state) AS med_stateCarpool
+    FROM county_perc
+)
+SELECT TOP 20
+	GEOID,
+    State,
+    County,
+	carpool,
+	national_median_carpool,
+	med_stateCarpool,
+	perc_carpool
+FROM with_median
+WHERE carpool > national_median_carpool
+	AND carpool < med_stateCarpool 
+ORDER BY perc_carpool DESC
