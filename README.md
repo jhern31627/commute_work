@@ -1,7 +1,7 @@
 # U.S. Commute & Demographic Analytics
 
 ## Project Overview
-This project evaluates how socioeconomic factors—specifically median household income and population density—influence U.S. commuter transit choices. By analyzing county- and city-level commute data across multiple transport modes (Work-from-Home, carpooling, public transit, drive-alone, and non-vehicular travel), the analysis establishes demographic benchmarks to guide regional transportation planning and remote-work policy strategy.
+This project evaluates how socioeconomic factors specifically median household income and population density influence U.S. commuter transit choices. By analyzing county  and city-level commute data across multiple transport modes (Work-from-Home, carpooling, public transit, drive alone, and non-vehicular travel), the analysis establishes demographic benchmarks to guide regional transportation planning and remote work policy strategy.
 
 ---
 
@@ -20,6 +20,6 @@ This project evaluates how socioeconomic factors—specifically median household
 ---
 
 ## Key Features & Insights
-* **Income Tier Distribution:** Categorized regions by median household income tiers to identify adoption thresholds for remote work and non-car commuting.
+* **Income Tier Distribution:** Categorized regions by median household income tiers to identify adoption thresholds for remote work and non car commuting.
 * **Regression Analysis:** Modeled public transit and WFH adoption against population density to isolate structural adoption gaps.
-* **Interactive Dashboard:** Designed a multi-page Power BI dashboard featuring county-level filtering, state benchmarks, and modal share trends.
+* **Interactive Dashboard:** Designed a multi page Power BI dashboard featuring county-level filtering, state benchmarks, and modal share trends.
